@@ -305,11 +305,13 @@ scroll-snap-align:start;
 background:var(--paper);border-radius:var(--radius);
 padding:12px 12px 26px;
 display:flex;flex-direction:column;
+contain:layout paint;
 }
 .venue-photo{
 position:relative;margin:0;
 aspect-ratio:4 / 3;
 border-radius:20px;overflow:hidden;background:var(--paper-2);
+transform:translateZ(0);
 }
 .venue-photo img{width:100%;height:100%;object-fit:cover}
 .venue-badges{
@@ -1043,21 +1045,28 @@ openModal("pdfModal");
 }
 /* Площадки: карусель на native scroll-snap (4 карточки на ПК, 2 на планшете, 1 на телефоне) */
 (function(){
+const section=document.getElementById('venues');
 const track=document.getElementById('venuesTrack');
 if(!track)return;
 const cards=[...track.querySelectorAll('.venue-card')];
+const imgs=[...track.querySelectorAll('img')];
 const dotsBox=document.getElementById('venuesDots');
 const prevBtn=document.getElementById('venuesPrev');
 const nextBtn=document.getElementById('venuesNext');
 const reduceMotion=window.matchMedia('(prefers-reduced-motion: reduce)');
-let dots=[];
-function perView(){return parseInt(getComputedStyle(track).getPropertyValue('--per'),10)||1;}
-function maxIndex(){return Math.max(0,cards.length-perView());}
-function step(){return cards.length>1 ? cards[1].offsetLeft-cards[0].offsetLeft : (cards[0]?cards[0].offsetWidth:0);}
-function current(){const s=step();return s?Math.min(maxIndex(),Math.max(0,Math.round(track.scrollLeft/s))):0;}
-function goTo(i){track.scrollTo({left:i*step(),behavior:reduceMotion.matches?'auto':'smooth'});}
-function updateDots(){
+let dots=[],per=1,stepPx=0,active=-1;
+/* размеры считаем один раз (и при resize), а не на каждый кадр скролла */
+function measure(){
+per=parseInt(getComputedStyle(track).getPropertyValue('--per'),10)||1;
+stepPx=cards.length>1 ? cards[1].offsetLeft-cards[0].offsetLeft : (cards[0]?cards[0].offsetWidth:0);
+}
+function maxIndex(){return Math.max(0,cards.length-per);}
+function current(){return stepPx?Math.min(maxIndex(),Math.max(0,Math.round(track.scrollLeft/stepPx))):0;}
+function goTo(i){track.scrollTo({left:i*stepPx,behavior:reduceMotion.matches?'auto':'smooth'});}
+function updateDots(force){
 const c=current();
+if(c===active&&!force)return; /* DOM трогаем только если индекс реально изменился */
+active=c;
 dots.forEach((d,k)=>{
 d.classList.toggle('active',k===c);
 if(k===c){d.setAttribute('aria-current','true');}else{d.removeAttribute('aria-current');}
@@ -1076,7 +1085,7 @@ b.addEventListener('click',()=>goTo(i));
 dotsBox.appendChild(b);
 dots.push(b);
 }
-updateDots();
+updateDots(true);
 }
 prevBtn.addEventListener('click',()=>{const i=current()-1;goTo(i<0?maxIndex():i);});
 nextBtn.addEventListener('click',()=>{const i=current()+1;goTo(i>maxIndex()?0:i);});
@@ -1084,15 +1093,38 @@ let ticking=false;
 track.addEventListener('scroll',()=>{
 if(ticking)return;
 ticking=true;
-requestAnimationFrame(()=>{updateDots();ticking=false;});
+requestAnimationFrame(()=>{updateDots(false);ticking=false;});
 },{passive:true});
-let lastPer=perView();
+let resizeTimer;
 window.addEventListener('resize',()=>{
-const p=perView();
-if(p!==lastPer){lastPer=p;buildDots();}
-else{updateDots();}
+clearTimeout(resizeTimer);
+resizeTimer=setTimeout(()=>{
+const prev=per;
+measure();
+if(per!==prev){buildDots();}else{updateDots(true);}
+},120);
 });
+measure();
 buildDots();
+/* Заранее подгружаем и декодируем фото по очереди, когда раздел приближается к экрану,
+   чтобы при листании браузер не декодировал тяжёлые картинки на лету */
+let warmed=false;
+async function warm(){
+if(warmed)return;
+warmed=true;
+for(const img of imgs){
+img.loading='eager';
+try{ if(img.decode) await img.decode(); }catch(e){}
+}
+}
+if('IntersectionObserver' in window && section){
+const io=new IntersectionObserver(entries=>{
+if(entries.some(e=>e.isIntersecting)){warm();io.disconnect();}
+},{rootMargin:'1200px 0px'});
+io.observe(section);
+}else{
+window.addEventListener('load',warm);
+}
 })();
 </script>
 </body>
